@@ -4,8 +4,8 @@ class SearchService {
 	constructor() {
 		// Initialize MeiliSearch client
 		this.client = new MeiliSearch({
-			host: "http://localhost:7700", // Default MeiliSearch host
-			apiKey: "masterKey", // Default master key - should be configured in production
+			host: "http://localhost:7700",
+			apiKey: "O4FcFl_zfVnYZt6Tm007DyfzpmoiccdK1PTn6g7Ei14", // Use the generated master key
 		});
 		this.indexName = "files";
 		this.initialized = false;
@@ -16,21 +16,25 @@ class SearchService {
 
 		try {
 			// Get or create the files index
-			this.index = await this.client.getOrCreateIndex(this.indexName, {
-				primaryKey: "path",
-			});
+			this.index = this.client.index(this.indexName);
+
+			// Create index if it doesn't exist
+			try {
+				await this.client.createIndex(this.indexName, { primaryKey: "path" });
+			} catch (error) {
+				// Index might already exist, which is fine
+				if (!error.message.includes("already exists")) {
+					throw error;
+				}
+			}
 
 			// Configure searchable attributes
-			await this.index.updateSearchableAttributes(["path", "name", "content", "extension"]);
-
-			// Configure filterable attributes
-			await this.index.updateFilterableAttributes(["size", "modified", "created", "extension", "isTextFile"]);
-
-			// Configure sortable attributes
-			await this.index.updateSortableAttributes(["size", "modified", "created"]);
-
-			// Configure ranking rules
-			await this.index.updateRankingRules(["words", "typo", "proximity", "attribute", "sort", "exactness"]);
+			await this.index.updateSettings({
+				searchableAttributes: ["path", "name", "content", "extension"],
+				filterableAttributes: ["size", "modified", "created", "extension", "isTextFile"],
+				sortableAttributes: ["size", "modified", "created"],
+				rankingRules: ["words", "typo", "proximity", "attribute", "sort", "exactness"],
+			});
 
 			this.initialized = true;
 		} catch (error) {

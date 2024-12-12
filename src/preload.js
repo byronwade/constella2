@@ -10,7 +10,10 @@ function log(...args) {
 
 contextBridge.exposeInMainWorld("electron", {
 	selectDirectory: () => ipcRenderer.invoke("select-directory"),
-	startScan: (path) => ipcRenderer.send("start-scan", path),
+	startScan: (dirPath) => {
+		log("Starting scan for directory:", dirPath);
+		ipcRenderer.send("start-scan", dirPath);
+	},
 	pauseScan: (isPaused) => ipcRenderer.send("pause-scan", isPaused),
 	cancelScan: () => ipcRenderer.send("cancel-scan"),
 	search: (query) => ipcRenderer.send("search", query),

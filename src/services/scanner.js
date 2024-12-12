@@ -1,16 +1,23 @@
 import { fdir } from "fdir";
+import path from "path";
 
-export async function scanDirectory(path) {
+export async function scanDirectory(dirPath) {
+	const normalizedPath = path.normalize(dirPath);
+
 	const crawler = new fdir()
 		.withFullPaths()
 		.withMaxDepth(10)
 		.withSymlinks()
 		.withDirs()
-		.withBasePath(path)
-		.filter((path, isDirectory) => !path.includes("node_modules") && !path.includes(".git"));
+		.normalize()
+		.withBasePath(normalizedPath)
+		.filter((filePath, isDirectory) => {
+			const normalizedFilePath = path.normalize(filePath);
+			return !normalizedFilePath.includes("node_modules") && !normalizedFilePath.includes(".git") && !normalizedFilePath.includes(".cache");
+		});
 
 	try {
-		const files = await crawler.crawl(path).withPromise();
+		const files = await crawler.crawl(normalizedPath).withPromise();
 		return {
 			success: true,
 			files,

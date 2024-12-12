@@ -1,5 +1,4 @@
-const { FusesPlugin } = require("@electron-forge/plugin-fuses");
-const { FuseV1Options, FuseVersion } = require("@electron/fuses");
+const path = require("path");
 
 module.exports = {
 	packagerConfig: {
@@ -26,10 +25,6 @@ module.exports = {
 	],
 	plugins: [
 		{
-			name: "@electron-forge/plugin-auto-unpack-natives",
-			config: {},
-		},
-		{
 			name: "@electron-forge/plugin-webpack",
 			config: {
 				mainConfig: "./webpack.main.config.js",
@@ -39,23 +34,24 @@ module.exports = {
 						{
 							html: "./src/index.html",
 							js: "./src/index.js",
-							name: "main_window",
-							preload: {
-								js: "./src/preload.js",
-							},
+							name: "renderer",
 						},
 					],
 				},
+				port: 3000,
+				loggerPort: 9000,
+				devContentSecurityPolicy: "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* ws://localhost:*; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' http://localhost:* ws://localhost:*;",
+				devServer: {
+					static: {
+						directory: path.join(__dirname, "src"),
+					},
+					hot: true,
+					liveReload: true,
+					headers: {
+						"Access-Control-Allow-Origin": "*",
+					},
+				},
 			},
 		},
-		new FusesPlugin({
-			version: FuseVersion.V1,
-			[FuseV1Options.RunAsNode]: false,
-			[FuseV1Options.EnableCookieEncryption]: true,
-			[FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
-			[FuseV1Options.EnableNodeCliInspectArguments]: false,
-			[FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
-			[FuseV1Options.OnlyLoadAppFromAsar]: true,
-		}),
 	],
 };

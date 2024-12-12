@@ -1,14 +1,36 @@
 const { parentPort } = require("worker_threads");
 const { fdir } = require("fdir");
+const path = require("path");
+const os = require("os");
 
 // System directories to exclude for maximum performance
-const EXCLUDED_DIRS = ["Windows", "Program Files", "Program Files (x86)", "ProgramData", "Windows.old", "$Recycle.Bin", "System Volume Information", "node_modules", ".git"];
+const SYSTEM_DIRS = {
+	win32: ["Windows", "Program Files", "Program Files (x86)", "ProgramData", "Windows.old", "$Recycle.Bin", "System Volume Information"],
+	darwin: ["/System", "/Library", "/private"],
+	linux: ["/bin", "/boot", "/dev", "/etc", "/lib", "/proc", "/sys"],
+};
+
+// Common directories to exclude across all platforms
+const COMMON_EXCLUDED_DIRS = ["node_modules", ".git", ".cache"];
 
 let isPaused = false;
 let shouldCancel = false;
 
 function shouldExcludeDir(dirPath) {
-	return EXCLUDED_DIRS.some((excluded) => dirPath.includes(excluded));
+	const normalizedPath = path.normalize(dirPath);
+	const platform = os.platform();
+
+	// Check common directories first
+	if (COMMON_EXCLUDED_DIRS.some((dir) => normalizedPath.includes(dir))) {
+		return true;
+	}
+
+	// Check platform-specific system directories
+	const systemDirs = SYSTEM_DIRS[platform] || [];
+	return systemDirs.some((dir) => {
+		const normalizedDir = path.normalize(dir);
+		return normalizedPath.includes(normalizedDir);
+	});
 }
 
 // Helper to handle pausing
@@ -37,8 +59,12 @@ parentPort.on("message", async (message) => {
 				message: "Counting files...",
 			});
 
-			// Configure fdir for maximum speed
-			const api = new fdir().withFullPaths().withDirs().crawl(message.dirPath);
+			// Configure fdir with platform-specific settings
+			const api = new fdir()
+				.withFullPaths()
+				.withDirs()
+				.normalize() // Normalize paths for cross-platform compatibility
+				.crawl(message.dirPath);
 
 			let totalItems = 0;
 			await api.withPromise().then((files) => {
@@ -73,6 +99,7 @@ parentPort.on("message", async (message) => {
 				parentPort.postMessage({
 					type: "result",
 					success: true,
+					dirPath: message.dirPath,
 					stats: {
 						totalFiles: totalItems,
 						timeInSeconds: timeInSeconds,

@@ -3,6 +3,7 @@ import path from "node:path";
 import started from "electron-squirrel-startup";
 import { Worker } from "worker_threads";
 import { exec } from "child_process";
+import { spawn } from "child_process";
 import searchService from "./services/searchService";
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -13,11 +14,104 @@ if (started) {
 let mainWindow = null;
 let fileWorker = null;
 let indexWorker = null;
+let meiliSearchProcess = null;
+
+const MEILISEARCH_MASTER_KEY = "O4FcFl_zfVnYZt6Tm007DyfzpmoiccdK1PTn6g7Ei14";
 
 function log(...args) {
 	const timestamp = new Date().toISOString();
 	console.log(`[${timestamp}]`, ...args);
 }
+
+const createWindow = async () => {
+	log("Application ready, creating window");
+
+	// Create the browser window.
+	mainWindow = new BrowserWindow({
+		width: 1200,
+		height: 800,
+		webPreferences: {
+			nodeIntegration: false,
+			contextIsolation: true,
+			preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
+		},
+	});
+
+	// and load the index.html of the app.
+	await mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
+
+	// Open the DevTools in development.
+	if (process.env.NODE_ENV === "development") {
+		mainWindow.webContents.openDevTools();
+	}
+};
+
+// Start MeiliSearch server
+async function startMeiliSearch() {
+	return new Promise((resolve, reject) => {
+		try {
+			// Start MeiliSearch server
+			meiliSearchProcess = spawn("meilisearch", ["--master-key", MEILISEARCH_MASTER_KEY], {
+				stdio: "pipe",
+			});
+
+			meiliSearchProcess.stdout.on("data", (data) => {
+				log("MeiliSearch:", data.toString());
+				if (data.toString().includes("Server is listening")) {
+					resolve();
+				}
+			});
+
+			meiliSearchProcess.stderr.on("data", (data) => {
+				log("MeiliSearch Error:", data.toString());
+			});
+
+			meiliSearchProcess.on("error", (error) => {
+				log("Failed to start MeiliSearch:", error);
+				reject(error);
+			});
+
+			// Clean up MeiliSearch process on app quit
+			app.on("before-quit", () => {
+				if (meiliSearchProcess) {
+					meiliSearchProcess.kill();
+				}
+			});
+		} catch (error) {
+			log("Error starting MeiliSearch:", error);
+			reject(error);
+		}
+	});
+}
+
+// This method will be called when Electron has finished
+// initialization and is ready to create browser windows.
+// Some APIs can only be used after this event occurs.
+app.whenReady().then(async () => {
+	try {
+		await startMeiliSearch();
+		await createWindow();
+	} catch (error) {
+		log("Error during app initialization:", error);
+	}
+
+	app.on("activate", async () => {
+		// On macOS it's common to re-create a window in the app when the
+		// dock icon is clicked and there are no other windows open.
+		if (BrowserWindow.getAllWindows().length === 0) {
+			await createWindow();
+		}
+	});
+});
+
+// Quit when all windows are closed, except on macOS. There, it's common
+// for applications and their menu bar to stay active until the user quits
+// explicitly with Cmd + Q.
+app.on("window-all-closed", () => {
+	if (process.platform !== "darwin") {
+		app.quit();
+	}
+});
 
 // Safely send message to renderer
 function safelySendToRenderer(channel, ...args) {
@@ -49,7 +143,7 @@ function cleanupWorker() {
 	}
 }
 
-function createFileWorker(dirPath) {
+function createFileWorker() {
 	// Clean up any existing worker
 	cleanupWorker();
 
@@ -117,6 +211,12 @@ function createIndexWorker() {
 }
 
 function startIndexing(dirPath) {
+	if (!dirPath) {
+		log("No directory path provided for indexing");
+		return;
+	}
+
+	log("Starting indexing for directory:", dirPath);
 	if (indexWorker) {
 		indexWorker.terminate();
 	}
@@ -144,7 +244,7 @@ ipcMain.handle("select-directory", async () => {
 });
 
 // Handle directory scanning
-ipcMain.handle("scan-directory", async (event, dirPath) => {
+ipcMain.on("start-scan", async (event, dirPath) => {
 	log("Starting directory scan:", dirPath);
 
 	// Check if directory exists and is accessible
@@ -153,15 +253,16 @@ ipcMain.handle("scan-directory", async (event, dirPath) => {
 		await fs.promises.access(dirPath, fs.constants.R_OK);
 	} catch (error) {
 		log("Directory access error:", error);
-		return {
-			success: false,
+		mainWindow.webContents.send("scanUpdate", {
+			type: "error",
 			error: `Cannot access directory: ${error.message}`,
-		};
+		});
+		return;
 	}
 
 	// Create and start worker
-	createFileWorker(dirPath);
-	return { success: true, message: "Scan started" };
+	const worker = createFileWorker(dirPath);
+	worker.postMessage({ type: "scan", dirPath });
 });
 
 // Handle pause/resume
@@ -205,45 +306,4 @@ ipcMain.on("open-file", (event, filePath) => {
 			console.error("Error opening file:", error);
 		}
 	});
-});
-
-const createWindow = () => {
-	log("Creating main window");
-	mainWindow = new BrowserWindow({
-		width: 1200,
-		height: 800,
-		webPreferences: {
-			nodeIntegration: false,
-			contextIsolation: true,
-			preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
-			webSecurity: true,
-		},
-	});
-
-	mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
-
-	if (process.env.NODE_ENV === "development") {
-		mainWindow.webContents.openDevTools();
-		log("DevTools opened in development mode");
-	}
-};
-
-app.whenReady().then(() => {
-	log("Application ready, creating window");
-	createWindow();
-
-	app.on("activate", () => {
-		if (BrowserWindow.getAllWindows().length === 0) {
-			log("No windows available, creating new window");
-			createWindow();
-		}
-	});
-});
-
-app.on("window-all-closed", () => {
-	cleanupWorker(); // Ensure worker is cleaned up when closing
-	if (process.platform !== "darwin") {
-		log("All windows closed, quitting application");
-		app.quit();
-	}
 });
